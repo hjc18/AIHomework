@@ -7,69 +7,86 @@
 //
 #include <cstdlib>
 #include <ctime>
-//#include <iostream>
-#include "Uct.hpp"
+#include "Uct.h"
 #include "Judge.h"
-bool Uct::search(){
-    // root 为当前状态，从该处开始寻找待扩展节点
-    //print(curTop, curBoard);
-//    if(root->child) for(int i = 0; i < N; i++){
-//        if(root->child[i] && root->child[i]->already == -1){
-//            root->bestKid = root->child[i];
-//            return true;
-//        }
-//    }
-    UctNode* cur = findNext();
-    //print(curTop, curBoard);
-    if(cur->already == 2){
-        backward(cur, forward(cur));
+int _board[144]={0};
+int _top[12]={0};
+bool Uct::endCheck(){
+    for(int i = 0; i < N; i++){
+        if(root->child[i] && root->child[i]->n > root->bestKid->n){
+            return false;
+        }
     }
-    update(cur->parent);
-    return false;
+    return true;
 }
-
-void Uct::updateBest(UctNode* p){
-    int try_cnt = 0;
-    bool loser = true;
-    bool s = true;
-    if(!p->full){
-        loser = false;
-        s = false;
-    }
-    else for(int i = 0; i < N; i++){
-        if(p->child[i]){
-            if(p->child[i]->already != 1){
-            loser = false;
-            s = false;
-            break;
-            }
-            else if(!p->child[i]->skip){
-                s = false;
-            }
+void Uct::finalCheck(){
+    for(int i = 0; i < N; i++){
+        if(root->child[i] && root->child[i]->leaf){
+            root->bestKid = root->child[i];
+            return;
         }
     }
     for(int i = 0; i < N; i++){
+        if(root->child[i] && root->child[i]->tag == -1){
+            root->bestKid = root->child[i];
+            return;
+        }
+    }
+    if(root->bestKid->tag == 1) {
+        UctNode *sec = nullptr;
+        for (int j = 0; j < N; j++) {
+            if (root->child[j] && root->child[j]->tag != 1) {
+                sec = root->child[j];
+            }
+        }
+        if(sec){
+            for(int j = 0; j < N; j++){
+                if(root->child[j] && root->child[j]->tag != 1 && root->child[j]->confidence() > sec->confidence())
+                    sec = root->child[j];
+            }
+            root->bestKid = sec;
+        }
+    }
+}
+void Uct::search(){
+    // root 为当前状态，从该处开始寻找待扩展节点
+    UctNode* cur = findNext();
+    if(!cur->leaf && !cur->skip) backward(cur, forward(cur));// 需要模拟
+    update(cur->parent); // 更新树
+}
+void Uct::updateTag(UctNode * p) {
+    int min = 100;
+    int max = 0;
+    for(int i = 0; i < N; i++){
         if(p->child[i]){
-            try_cnt += p->child[i]->n;
-            if(p->child[i]->already == -1) {
-                p->already = 1;
-                if(p->child[i]->leaf){
-                    p->skip = true;
+            if(p->child[i]->tag != 1){
+                return;
+            }
+            else {
+                if (p->child[i]->skip < min) {
+                    min = p->child[i]->skip;
+                }
+                if (p->child[i]->skip > max){
+                    max = p->child[i]->skip;
                 }
             }
         }
     }
+    p->tag = -1;
+    p->parent->tag = 1;
+    if(min >= 1 && max <= 3){
+        p->skip = max + 1;
+        p->parent->skip = max + 2;
+    }
+}
+void Uct::updateBest(UctNode* p){
+
     for(int i = 0; i < N; i++){
-        if(p->child[i] && p->child[i]->confidence(try_cnt, 2) > p->bestKid->confidence(try_cnt, 2)){
+        if(p->child[i] && p->child[i]->confidence() > p->bestKid->confidence()){
             p->bestKid = p->child[i];
         }
     }
-    if(loser){
-        p->already = -1;
-    }
-    if(s){
-        p->skipp = true;
-    }
+
 }
 void Uct::clear(UctNode* cur, UctNode* safe){
     if(!cur->child) return;
@@ -81,25 +98,17 @@ void Uct::clear(UctNode* cur, UctNode* safe){
         }
     }
     delete[] cur->child;
-//    for(auto it = cur->kids.begin(); it != cur->kids.end(); it++){
-//        if(nodes[it->second] != safe){
-//            clear(nodes[it->second], nullptr);
-//            delete nodes[it->second];
-//            nodes[it->second] = nullptr;
-//        }
-//    }
-//    cur->kids.clear();
 }
 void Uct::update(UctNode* cur){
     UctNode* p = cur;
     while(p){
         updateBest(p);
+        if(p != root && p->tag == 2 && p->full) updateTag(p);
         p = p->parent;
     }
 }
 
 void Uct::rotate(UctNode* newroot) {
-    depth = 0;
     clear(root, newroot);//new root 是下一层节点，需删除原根及无用子树
     delete root;
     root = newroot;
@@ -108,19 +117,15 @@ void Uct::rotate(UctNode* newroot) {
 void Uct::move(int lastx, int lasty, int* _t, int** _b){
     curTop = _t;
     curBoard = _b;
-    UctNode* newroot;
-    if(root->has(lasty)) newroot = root->child[lasty];
+    if(root->has(lasty)) rotate(root->child[lasty]);
     else {
-        newroot = new UctNode(nullptr, lastx, lasty);
+        UctNode* newroot = new UctNode(nullptr, lastx, lasty);
+        rotate(newroot);
     }
-    rotate(newroot);
 }
 void Uct::backward(UctNode* cur, int res){
     UctNode* p = cur;
-    int count = 0;
-    while(p){
-        count++;
-        //print(curTop, curBoard);
+    while(true){
         p->n++;
         p->w += res;
         res *= -1;
@@ -132,7 +137,6 @@ void Uct::backward(UctNode* cur, int res){
         }
         p = p->parent;
     }
-    if(count > depth) depth = count;
     //print(curTop, curBoard);
 }
 UctNode* Uct::findNext(){
@@ -153,13 +157,13 @@ UctNode* Uct::findNext(){
             }
             p->full = true;
         }
-        srand(time(0));
-        if(p->bestKid->leaf || p->bestKid->skip || p->bestKid->skipp){
+        if(p->bestKid->leaf || p->bestKid->skip){
             // 至此，下一步已经出结果了
             UctNode* q = p->bestKid;
-            p->bestKid->n++;
-            p->bestKid->w += q->already;
-            backward(p, -1 * q->already);
+            p->bestKid->n ++;
+            p->bestKid->selfn ++;
+            p->bestKid->w +=  q->tag;
+            backward(p, -1 * q->tag);
             return q;
         }
         else {
@@ -173,7 +177,7 @@ UctNode* Uct::findNext(){
     return nullptr;
 }
 
-void Uct::print(const int* t, int* const *board){
+void Uct::print(const int* t, int* const *board, int x, int y){
     using namespace std;
     cout << "\t";
     for(int j = 0; j < N; j++){
@@ -189,7 +193,16 @@ void Uct::print(const int* t, int* const *board){
             else if (!board[i][j]){
                 cout << "." << "\t";
             }
-            else cout << board[i][j] << "\t";
+            else{
+                if(x == i && y == j){
+                    cout << "|";
+                }
+                cout << board[i][j];
+                if(x == i && y == j){
+                    cout << "|";
+                }
+                cout << "\t";
+            }
         }
         cout << endl;
     }
@@ -199,132 +212,95 @@ void Uct::print(const int* t, int* const *board){
     }
     cout << endl;
 }
-int Uct::forward(UctNode* const cur){
-    UctNode* p = cur;
-
-//    res = globalJudge(curBoard, curTop, type, nextx, nexty);
-//    p->already = res;
-//    if(res == 1){
-//        p->nextx = nextx;
-//        p->nexty = nexty;
-//        return res;
-//    }
-//    else if(res == -1){
-//        //拓展所有子节点
-//        for(int i = 0; i < N; i++){
-//            if(curTop[i] > 0) {
-//                curTop[i]--;
-//                UctNode *newnode = new UctNode(p, curTop[i], i);// need to expand
-//                p->add(newnode, N);
-//                curBoard[curTop[i]][i] = p->type;
-//                if (i == noy && curTop[i] - 1 == nox) curTop[i]--;
-//                forward(newnode);
-//                curTop[i]++;
-//                if (i == noy && curTop[i] == nox) curTop[i]++;
-//            }
-//        }
-//        p->nextx = nextx;
-//        p->nexty = nexty;
-//        p->full = true;
-//        return res;
-//    }
-//    else if(res == 0){
-//        return 0;
-//    }
-//    else if(nextx != -1){
-//        p->nextx = nextx;
-//        p->nexty = nexty;
-//    }
+int Uct::forward(UctNode* const p){
+    p->selfn ++;
     //可认为top是顶 nox noy已处理
-    if(p->type == 2){// 上一步是1 用户已经赢了
-        if(userWin(p->lastx, p->lasty, M, N, curBoard)){
-            p->already = -1;
-            p->leaf = true;
-            return -1;
-        }
-        else if(isTie(N, curTop)){
-            p->already = 0;
-            p->leaf = true;
-            return 0;
-        }
+    if(JudgeWin(p->lastx, p->lasty, curBoard, 3-p->type)){
+        p->tag = -1;
+        p->leaf = true;
+        p->parent->tag = 1;
+        p->parent->skip = 1;
+        return -1;
     }
-    else {
-        if(machineWin(p->lastx, p->lasty, M, N, curBoard)){
-            p->already = -1;
-            p->leaf = true;
-            return -1;
-        }
-        else if(isTie(N, curTop)){
-            p->already = 0;
-            p->leaf = true;
-            return 0;
-        }
+    else if(isTie(N, curTop)){
+        p->tag = 0;
+        p->leaf = true;
+        return 0;
     }
     int type = p->type;
-    int res = 0; int col, row;
+    int col, row;
     int nextx = -1, nexty = -1;
-    res = globalJudge(curBoard, curTop, type, nextx, nexty);
+    int res = globalJudge(curBoard, curTop, type, nextx, nexty);
     if(res != 2){
         return res;
     }
     srand((unsigned int)time(0));
-    //copy
-    int** _board = new int*[M];
     for(int i = 0; i < M; i++){
-        _board[i] = new int[N];
         for(int j = 0; j < N; j++){
-            _board[i][j] = curBoard[i][j];
+            _board[ i * N + j] = curBoard[i][j];
         }
     }
-    int* _top = new int[N];
     for(int i = 0; i < N; i++){
         _top[i] = curTop[i];
     }
     while(1){
-//        col = rand() % N;
-//        while(_top[col] < 1) col = rand() % N;
-//        _top[col]--;
-//        _board[_top[col]][col] = type;
-//        //print(_top, _board);
-//        if(type == 1 && userWin(_top[col], col, M, N, _board)){//上一步是1
-//            res = p->type == 1 ? 1 : -1;
-//            break;
-//        }
-//        else if(type == 2 && machineWin(_top[col], col, M, N, _board)){//上一步是2
-//            res = p->type == 2 ? 1 : -1;
-//            break;
-//        }
-//        if(col == noy && _top[col] - 1 == nox) _top[col]--;
-//        if(_top[col] < 1 && isTie(N, _top)){
-//            res = 0;
-//            break;
-//        }
-//        type = 3 - type;
         if(nextx == -1 && nexty == -1) {
             col = rand() % N;
             while (_top[col] < 1) col = rand() % N;
         }
         else col = nexty;
         _top[col]--;
-        _board[_top[col]][col] = type;
+        _board[_top[col]*N+col] = type;
         row = _top[col];
-        //print(_top, _board);
         if(col == noy && _top[col] - 1 == nox) _top[col]--;
         res = quickJudge(row, col, _board, _top, type, nextx, nexty);
-        if(res == 2){//continue
-            type = 3 - type;
-            continue;
+        if(res != 2){
+            return type == p->type ? res : res*-1;
         }
-        //else
-        if(type != p->type) res *= -1;
-        break;
+        type = 3-type;
+
     }
-    for(int i = 0; i < M; i++){
-        delete[] _board[i];
-    }
-    delete[] _board;
-    delete[] _top;
-    return res;
+}
+bool Uct::JudgeWin(const int x, const int y, int** board, int type){
+    //横向检测
+    int i, j;
+    int count = 0;
+    for (i = y; i >= 0; i--)
+        if (board[x][i] != type) break;
+    count += (y - i);
+    for (i = y; i < N; i++)
+        if (board[x][i] != type) break;
+    count += (i - y - 1);
+    if (count >= 4) return true;
+
+    //左下-右上
+    count = 0;
+    for (i = x, j = y; i < M && j >= 0; i++, j--)
+        if (board[i][j] != type) break;
+    count += (y - j);
+    for (i = x, j = y; i >= 0 && j < N; i--, j++)
+        if (board[i][j] != type) break;
+    count += (j - y - 1);
+    if (count >= 4) return true;
+
+    //左上-右下
+    count = 0;
+    for (i = x, j = y; i >= 0 && j >= 0; i--, j--)
+        if (board[i][j] != type) break;
+    count += (y - j);
+    for (i = x, j = y; i < M && j < N; i++, j++)
+        if (board[i][j] != type) break;
+    count += (j - y - 1);
+    if (count >= 4) return true;
+
+    //纵向检测
+    count = 0;
+    for (i = x; i < M; i++)
+        if (board[i][y] != type) break;
+    count += (i - x);
+    if (count >= 4) return true;
+
+    return false;
 }
 int Uct::globalJudge(int *const *board, const int *top, int curType, int &nextx, int &nexty) {
     //测试当前全局有无急点
@@ -413,7 +389,7 @@ int Uct::globalJudge(int *const *board, const int *top, int curType, int &nextx,
     if(full) return 0;
     return 2;
 }
-int Uct::quickJudge(int x, int y, int * const* board, const int *top, int curType, int& nextx, int& nexty) {
+int Uct::quickJudge(int x, int y, int * board, const int *top, int curType, int& nextx, int& nexty) {
     //大前提，我下这步前，盘面没有急点
     int urgent_cnt = 0;//己方急点数 若多于一个 直接判胜
     int nx = top[y]-1;
@@ -436,11 +412,9 @@ int Uct::quickJudge(int x, int y, int * const* board, const int *top, int curTyp
             if (enemy == curType) {//向下
                 count = 0;
                 for (i = nx + 1; i < M; i++)
-                    if (board[i][y] != enemy) break;
+                    if (board[i*N+y] != enemy) break;
                 count += (i - nx);
-                if(count >= 5){
-                    return 1;
-                }
+                if(count >= 5) return 1;
                 if (count >= 4) {
                     urgent_cnt++;
                     nextx = nx; nexty = y;
@@ -450,10 +424,10 @@ int Uct::quickJudge(int x, int y, int * const* board, const int *top, int curTyp
             //左右
             count = 0;
             for (i = y - 1; i >= 0; i--)
-                if (board[nx][i] != enemy) break;
+                if (board[nx*N+i] != enemy) break;
             count += (y - i);
             for (i = y + 1; i < N; i++)
-                if (board[nx][i] != enemy) break;
+                if (board[nx*N+i] != enemy) break;
             count += (i - y - 1);
             if (count >= 4) {
                 if(enemy == curType){
@@ -466,10 +440,10 @@ int Uct::quickJudge(int x, int y, int * const* board, const int *top, int curTyp
             //左下-右上
             count = 0;
             for (i = nx + 1, j = y - 1; i < M && j >= 0; i++, j--)
-                if (board[i][j] != enemy) break;
+                if (board[i*N+j] != enemy) break;
             count += (y - j);
             for (i = nx - 1, j = y + 1; i >= 0 && j < N; i--, j++)
-                if (board[i][j] != enemy) break;
+                if (board[i*N+j] != enemy) break;
             count += (j - y - 1);
             if (count >= 4) {
                 if(enemy == curType){
@@ -482,10 +456,10 @@ int Uct::quickJudge(int x, int y, int * const* board, const int *top, int curTyp
             //左上-右下
             count = 0;
             for (i = nx - 1, j = y - 1; i >= 0 && j >= 0; i--, j--)
-                if (board[i][j] != enemy) break;
+                if (board[i*N+j] != enemy) break;
             count += (y - j);
             for (i = nx + 1, j = y + 1; i < M && j < N; i++, j++)
-                if (board[i][j] != enemy) break;
+                if (board[i*N+j] != enemy) break;
             count += (j - y - 1);
             if (count >= 4) {
                 if(enemy == curType){
@@ -504,13 +478,14 @@ int Uct::quickJudge(int x, int y, int * const* board, const int *top, int curTyp
     //若己方一个急点 传回nextx nexty
     //左右
     int il, ir, l, r;
+    int ill, irr, ll, rr;
     for(r = y+1; r < N; r++){
-        if(board[x][r] != curType) break;
+        if(board[x*N+r] != curType) break;
     }
     for(l = y-1; l >= 0; l--){
-        if(board[x][l] != curType) break;
+        if(board[x*N+l] != curType) break;
     }
-    if(r-l-1 >= 4){
+    if(r - l - 1 >= 4){
         return 1;
     }
     if(r - l - 1 >= 3){
@@ -525,13 +500,35 @@ int Uct::quickJudge(int x, int y, int * const* board, const int *top, int curTyp
             nextx = x; nexty = r;
         }
     }
+    else {
+        if (r < N - 1 && top[r] - 1 == x) {
+            for (rr = r + 1; rr < N; rr++) {
+                if (board[x*N+rr] != curType) break;
+            }
+            if (rr - l - 1 >= 4){
+                urgent_cnt++;
+                if(urgent_cnt > 1) return 1;
+                nextx = x; nexty = r;
+            }
+        }
+        if (l > 0 && top[l] - 1 == x) {
+            for (ll = l - 1; ll >= 0; ll--) {
+                if (board[x*N+ll] != curType) break;
+            }
+            if (r - ll - 1 >= 4){
+                urgent_cnt++;
+                if(urgent_cnt > 1) return 1;
+                nextx = x; nexty = l;
+            }
+        }
+    }
     //左下右上
     for(il = x+1, l = y-1; il < M && l >= 0; il++, l--){
-        if(board[il][l] != curType) break;
+        if(board[il*N+l] != curType) break;
     }
     ir = x-1; r = y+1;
     if(x > 0) for( ; ir >= 0 && r < N; ir--, r++){
-        if(board[ir][r] != curType) break;
+        if(board[ir*N+r] != curType) break;
     }
     if(r - l - 1 >= 4) return 1;
     if(r - l - 1 >= 3){
@@ -546,13 +543,35 @@ int Uct::quickJudge(int x, int y, int * const* board, const int *top, int curTyp
             nextx = ir; nexty = r;
         }
     }
+    else {
+        if (r < N - 1 && ir > 0 && top[r] - 1 == ir) {
+            for (rr = r + 1, irr = ir - 1; irr >= 0 && rr < N; irr--, rr++) {
+                if (board[irr*N+rr] != curType) break;
+            }
+            if (rr - l - 1 >= 4){
+                urgent_cnt++;
+                if(urgent_cnt > 1) return 1;
+                nextx = x; nexty = r;
+            }
+        }
+        if (l > 0 && il < M-1 && top[l] - 1 == il) {
+            for (ll = l - 1, ill = il + 1; ll >= 0 && ill < M; ll--, ill++) {
+                if (board[ill*N+ll] != curType) break;
+            }
+            if (r - ll - 1 >= 4){
+                urgent_cnt++;
+                if(urgent_cnt > 1) return 1;
+                nextx = x; nexty = l;
+            }
+        }
+    }
     //左上右下
     il = x-1; l = y-1;
     if(x > 0) for( ; il >= 0 && l >= 0; il--, l--){
-        if(board[il][l] != curType) break;
+        if(board[il*N+l] != curType) break;
     }
     for(ir = x+1, r = y+1; ir < M && r < N; ir++, r++){
-        if(board[ir][r] != curType) break;
+        if(board[ir*N+r] != curType) break;
     }
     if(r - l - 1 >= 4) return 1;
     if(r - l - 1 >= 3){
@@ -565,6 +584,28 @@ int Uct::quickJudge(int x, int y, int * const* board, const int *top, int curTyp
             urgent_cnt++;
             if(urgent_cnt > 1) return 1;
             nextx = ir; nexty = r;
+        }
+    }
+    else {
+        if (r < N - 1 && ir < M - 1 && top[r] - 1 == ir) {
+            for (rr = r + 1, irr = ir + 1; irr < M && rr < N; irr++, rr++) {
+                if (board[irr*N+rr] != curType) break;
+            }
+            if (rr - l - 1 >= 4){
+                urgent_cnt++;
+                if(urgent_cnt > 1) return 1;
+                nextx = x; nexty = r;
+            }
+        }
+        if (l > 0 && il > 0 && top[l] - 1 == il) {
+            for (ll = l - 1, ill = il - 1; ll >= 0 && ill >= 0; ll--, ill--) {
+                if (board[ill*N+ll] != curType) break;
+            }
+            if (r - ll - 1 >= 4){
+                urgent_cnt++;
+                if(urgent_cnt > 1) return 1;
+                nextx = x; nexty = l;
+            }
         }
     }
     return 2;
